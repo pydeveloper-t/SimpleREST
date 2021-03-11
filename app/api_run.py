@@ -1,4 +1,5 @@
 from flask_sqlalchemy import SQLAlchemy
+from cachelib import SimpleCache
 from sqlalchemy.dialects.postgresql import TEXT, TIMESTAMP
 from flask import Flask, jsonify, request, make_response, abort
 import os
@@ -6,8 +7,10 @@ import argparse
 import datetime
 
 app = Flask(__name__)
+print(os.getenv('SQLALCHEMY_DATABASE_URI'))
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('SQLALCHEMY_DATABASE_URI')
 db = SQLAlchemy(app)
+cache = SimpleCache()
 
 
 class Products(db.Model):
@@ -47,19 +50,25 @@ class Reviews(db.Model):
 @app.route('/product/<int:id>/<int:start>/<int:limit>', methods=['GET'])
 def product(id, start, limit):
     try:
-        raw_rows = db.session.query(Products, Reviews)\
-            .join(Reviews)\
-            .filter(int(id) == Products.id)\
-            .paginate(int(start), int(limit), False)\
-            .items
-        rows = [
-            {
-                'product_asin': row.Products.asin,
-                'product_title': row.Products.title,
-                'review_title':  row.Reviews.title,
-                'review_review': row.Reviews.review
-            } for row in raw_rows
-        ]
+        hash = f'{int(id)}#{int(start)}#{int(limit)}'
+        data = cache.get(hash)
+        if not data:
+            raw_rows = db.session.query(Products, Reviews)\
+                .join(Reviews)\
+                .filter(int(id) == Products.id)\
+                .paginate(int(start), int(limit), False)\
+                .items
+            rows = [
+                {
+                    'product_asin': row.Products.asin,
+                    'product_title': row.Products.title,
+                    'review_title':  row.Reviews.title,
+                    'review_review': row.Reviews.review
+                } for row in raw_rows
+            ]
+            cache.set(hash, rows)
+        else:
+            rows = data
         return jsonify(rows)
     except Exception as exc:
         abort(500)
